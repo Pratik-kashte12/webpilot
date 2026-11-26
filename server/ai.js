@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import { extractTopicLocally } from "./topicParser.js";
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -7,6 +8,12 @@ const openai = new OpenAI({
 const MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
 
 export async function extractWikipediaTopic(command) {
+  const localTopic = extractTopicLocally(command);
+
+  if (localTopic) {
+    return localTopic;
+  }
+
   if (!process.env.OPENAI_API_KEY) {
     throw new Error(
       "OPENAI_API_KEY is missing in server/.env"

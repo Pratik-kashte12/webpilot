@@ -8,9 +8,9 @@ import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
 import { Server } from "socket.io";
-import { extractWikipediaTopic } from "./ai.js";
 
 import Task from "./models/Task.js";
+import { extractWikipediaTopic } from "./ai.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -60,7 +60,9 @@ io.on("connection", (socket) => {
     }
 
     socket.join(`task:${taskId.trim()}`);
-    console.log(`Socket ${socket.id} subscribed to task ${taskId}`);
+    console.log(
+      `Socket ${socket.id} subscribed to task ${taskId}`
+    );
   });
 
   socket.on("disconnect", () => {
@@ -91,17 +93,6 @@ app.get("/api/tasks", async (req, res) => {
 app.post("/api/tasks", async (req, res) => {
   try {
     const command = String(req.body?.command || "").trim();
-    let wikipediaTopic = command;
-
-try {
-  wikipediaTopic = await extractWikipediaTopic(command);
-} catch (aiError) {
-  console.error("AI topic extraction failed:", aiError.message);
-
-  return res.status(400).json({
-    message: aiError.message,
-  });
-}
 
     if (!command) {
       return res.status(400).json({
@@ -109,10 +100,21 @@ try {
       });
     }
 
+    let wikipediaTopic = command;
+
+    try {
+      wikipediaTopic = await extractWikipediaTopic(command);
+    } catch (aiError) {
+      console.warn(
+        "AI topic extraction unavailable; using original command:",
+        aiError.message
+      );
+    }
+
     const task = await Task.create({
-  command: wikipediaTopic,
-  status: "pending",
-});
+      command: wikipediaTopic,
+      status: "pending",
+    });
 
     io.emit("task:updated", task.toObject());
 
