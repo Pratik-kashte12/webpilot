@@ -1,8 +1,11 @@
 import json
+import os
 import sys
+import time
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 
 BASE_URL = "https://en.wikipedia.org/wiki/"
+SCREENSHOT_DIRECTORY = os.path.join(os.path.dirname(__file__), "screenshots")
 
 def log(message):
     print(json.dumps({"type": "log", "message": message}), flush=True)
@@ -29,6 +32,8 @@ def extract_summary(page):
 def run_task(topic):
     log(f"Starting task for topic: {topic}")
 
+    os.makedirs(SCREENSHOT_DIRECTORY, exist_ok=True)
+
     with sync_playwright() as playwright:
         log("Launching Chromium browser")
 
@@ -43,21 +48,44 @@ def run_task(topic):
 
             log(f"Navigating to: {url}")
 
-            page.goto(url, wait_until="domcontentloaded", timeout=45000)
+            page.goto(
+                url,
+                wait_until="domcontentloaded",
+                timeout=45000,
+            )
 
             log("Checking page title")
 
             title = page.title().strip()
 
             if "Wikipedia" not in title:
-                raise ValueError(f"Wikipedia page not found for topic: {topic}")
+                raise ValueError(
+                    f"Wikipedia page not found for topic: {topic}"
+                )
 
             log("Extracting page summary")
 
             summary = extract_summary(page)
 
             if not summary:
-                raise ValueError("No readable summary was found on the Wikipedia page.")
+                raise ValueError(
+                    "No readable summary was found on the Wikipedia page."
+                )
+
+            log("Capturing page screenshot")
+
+            screenshot_name = f"{int(time.time() * 1000)}.png"
+
+            screenshot_path = os.path.join(
+                SCREENSHOT_DIRECTORY,
+                screenshot_name,
+            )
+
+            page.screenshot(path=screenshot_path, full_page=False)
+
+            screenshot_url = (
+                f"http://localhost:5000/screenshots/{screenshot_name}"
+            )
 
             log("Task completed successfully")
 
@@ -65,6 +93,7 @@ def run_task(topic):
                 "title": title,
                 "url": page.url,
                 "summary": summary,
+                "screenshotUrl": screenshot_url,
             }
         finally:
             log("Closing browser")

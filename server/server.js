@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
 import { Server } from "socket.io";
+import fs from "node:fs";
 
 import Task from "./models/Task.js";
 import { extractWikipediaTopic } from "./ai.js";
@@ -28,7 +29,21 @@ const pythonExecutable = path.join(
   "python.exe"
 );
 
+
 const app = express();
+const screenshotsDirectory = path.join(
+  automationDirectory,
+  "screenshots"
+);
+
+if (!fs.existsSync(screenshotsDirectory)) {
+  fs.mkdirSync(screenshotsDirectory, { recursive: true });
+}
+
+app.use(
+  "/screenshots",
+  express.static(screenshotsDirectory)
+);
 const httpServer = createServer(app);
 
 const io = new Server(httpServer, {

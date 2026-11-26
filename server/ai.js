@@ -7,6 +7,23 @@ const openai = new OpenAI({
 
 const MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
 
+const TOPIC_SCHEMA = {
+  type: "object",
+  properties: {
+    topic: {
+      type: "string",
+      description:
+        "Exact Wikipedia article topic. Use an empty string if no clear topic exists.",
+    },
+    confidence: {
+      type: "string",
+      enum: ["high", "medium", "low"],
+    },
+  },
+  required: ["topic", "confidence"],
+  additionalProperties: false,
+};
+
 export async function extractWikipediaTopic(command) {
   const localTopic = extractTopicLocally(command);
 
@@ -24,17 +41,20 @@ export async function extractWikipediaTopic(command) {
     model: MODEL,
     temperature: 0,
     response_format: {
-      type: "json_object",
+      type: "json_schema",
+      json_schema: {
+        name: "wikipedia_topic",
+        strict: true,
+        schema: TOPIC_SCHEMA,
+      },
     },
     messages: [
       {
         role: "system",
         content: [
           "You convert a user command into the best exact Wikipedia article topic.",
-          "Return only valid JSON.",
-          "Use this JSON shape: {\"topic\": \"string\", \"confidence\": \"high\" | \"medium\" | \"low\"}.",
-          "If the command is unclear or cannot identify one topic, return {\"topic\": \"\", \"confidence\": \"low\"}.",
-          "Do not add explanations.",
+          "Return a topic only when you are confident about a single Wikipedia article.",
+          "Use an empty topic string when the request is unclear.",
         ].join(" "),
       },
       {

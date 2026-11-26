@@ -1,10 +1,17 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { io } from "socket.io-client";
 
 const SERVER_URL = "http://localhost:5000";
 const API_URL = `${SERVER_URL}/api/tasks`;
 
-// Supports both MongoDB _id and API-provided id.
+const STATUS_FILTERS = [
+  { label: "All", value: "all" },
+  { label: "Pending", value: "pending" },
+  { label: "Running", value: "running" },
+  { label: "Completed", value: "completed" },
+  { label: "Failed", value: "failed" },
+];
+
 function getTaskId(task) {
   return String(task.id ?? task._id ?? "");
 }
@@ -62,6 +69,10 @@ function App() {
   const [runningId, setRunningId] = useState(null);
   const [error, setError] = useState("");
   const [socketConnected, setSocketConnected] = useState(false);
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [logs, setLogs] = useState({});
+  const socketRef = useRef(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -82,14 +93,15 @@ function App() {
         });
 
         if (!Array.isArray(data)) {
-          throw new Error("Tasks response array format me nahi hai.");
+          throw new Error(
+            "Tasks response array format me nahi hai."
+          );
         }
 
         if (!active || version !== requestVersion) return;
 
         let mergedTasks = data;
 
-        // Preserve socket updates received during this request.
         for (const { task, revision } of pendingUpdates.values()) {
           if (revision > startingRevision) {
             mergedTasks = upsertTask(mergedTasks, task);
@@ -116,8 +128,6 @@ function App() {
       if (!active) return;
 
       setSocketConnected(true);
-
-      // Also refresh tasks after reconnecting.
       void loadTasks();
     }
 
@@ -148,13 +158,33 @@ function App() {
       setTasks((previous) => upsertTask(previous, updatedTask));
     }
 
+    function handleTaskLog(log) {
+      if (!active || !log?.taskId) return;
+
+      setLogs((previous) => ({
+        ...previous,
+        [log.taskId]: [
+          ...(previous[log.taskId] || []),
+          {
+            id: `${log.taskId}-${log.at}-${Math.random()}`,
+            message: log.message,
+            level: log.level || "info",
+            at: log.at,
+          },
+        ],
+      }));
+    }
+
     socket.on("connect", handleConnect);
     socket.on("disconnect", handleDisconnect);
     socket.on("connect_error", handleConnectError);
     socket.on("task:updated", handleTaskUpdate);
+    socket.on("task:log", handleTaskLog);
 
     void loadTasks();
     socket.connect();
+
+    socketRef.current = socket;
 
     return () => {
       active = false;
@@ -164,6 +194,7 @@ function App() {
       socket.off("disconnect", handleDisconnect);
       socket.off("connect_error", handleConnectError);
       socket.off("task:updated", handleTaskUpdate);
+      socket.off("task:log", handleTaskLog);
 
       socket.disconnect();
     };
@@ -172,6 +203,17 @@ function App() {
   const agentRunning =
     runningId !== null ||
     tasks.some((task) => task.status === "running");
+
+  const visibleTasks = tasks.filter((task) => {
+    const matchesStatus =
+      statusFilter === "all" || task.status === statusFilter;
+
+    const matchesSearch = task.command
+      ?.toLowerCase()
+      .includes(searchQuery.trim().toLowerCase());
+
+    return matchesStatus && matchesSearch;
+  });
 
   async function addTask(event) {
     event.preventDefault();
@@ -193,7 +235,9 @@ function App() {
       });
 
       if (!task || !getTaskId(task)) {
-        throw new Error("Backend response me task ID nahi mili.");
+        throw new Error(
+          "Backend response me task ID nahi mili."
+        );
       }
 
       setTasks((previous) => upsertTask(previous, task));
@@ -211,6 +255,8 @@ function App() {
     setRunningId(taskId);
     setError("");
 
+    socketRef.current?.emit("task:subscribe", taskId);
+
     try {
       const updatedTask = await requestJson(
         `${API_URL}/${encodeURIComponent(taskId)}/run`,
@@ -218,7 +264,9 @@ function App() {
       );
 
       if (!updatedTask || !getTaskId(updatedTask)) {
-        throw new Error("Backend response me updated task nahi mila.");
+        throw new Error(
+          "Backend response me updated task nahi mila."
+        );
       }
 
       setTasks((previous) => upsertTask(previous, updatedTask));
@@ -245,13 +293,13 @@ function App() {
 
   return (
     <main className="min-h-screen bg-gray-950 px-4 py-10 text-white">
-      <div className="mx-auto max-w-4xl">
+      <div className="mx-auto max-w-5xl">
         <header className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <h1 className="text-3xl font-bold">WebPilot</h1>
 
             <p className="mt-2 text-gray-400">
-              Wikipedia automation — enter a topic, then run its task.
+              AI-powered browser automation dashboard.
             </p>
           </div>
 
@@ -277,8 +325,8 @@ function App() {
             value={command}
             onChange={(event) => setCommand(event.target.value)}
             disabled={submitting}
-            placeholder="Topic: India or Python (programming language)"
-            aria-label="Wikipedia topic"
+            placeholder="Tell me about India"
+            aria-label="Automation command"
             className="min-w-0 flex-1 rounded-lg border border-gray-700 bg-gray-900 px-4 py-3 outline-none focus:border-blue-500"
           />
 
@@ -291,11 +339,6 @@ function App() {
           </button>
         </form>
 
-        <p className="mt-3 text-sm text-amber-400">
-          Exact Wikipedia topic names only. AI planning aur detailed
-          browser logs abhi connected nahi hain.
-        </p>
-
         {error && (
           <p
             role="alert"
@@ -305,20 +348,51 @@ function App() {
           </p>
         )}
 
-        <section className="mt-10">
+        <section className="mt-8 rounded-xl border border-gray-800 bg-gray-900 p-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex flex-wrap gap-2">
+              {STATUS_FILTERS.map((filter) => (
+                <button
+                  key={filter.value}
+                  type="button"
+                  onClick={() => setStatusFilter(filter.value)}
+                  className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                    statusFilter === filter.value
+                      ? "bg-blue-600 text-white"
+                      : "bg-gray-800 text-gray-300 hover:bg-gray-700"
+                  }`}
+                >
+                  {filter.label}
+                </button>
+              ))}
+            </div>
+
+            <input
+              value={searchQuery}
+              onChange={(event) =>
+                setSearchQuery(event.target.value)
+              }
+              placeholder="Search tasks"
+              aria-label="Search tasks"
+              className="w-full rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-sm outline-none focus:border-blue-500 sm:w-64"
+            />
+          </div>
+        </section>
+
+        <section className="mt-8">
           <h2 className="mb-4 text-xl font-semibold">
-            Tasks ({tasks.length})
+            Tasks ({visibleTasks.length})
           </h2>
 
           {loading ? (
             <p className="text-gray-400">Loading tasks...</p>
-          ) : tasks.length === 0 ? (
+          ) : visibleTasks.length === 0 ? (
             <p className="rounded-xl border border-dashed border-gray-700 p-8 text-center text-gray-400">
-              No tasks to display.
+              No tasks match this filter.
             </p>
           ) : (
             <ul className="space-y-4">
-              {tasks.map((task) => {
+              {visibleTasks.map((task) => {
                 const taskId = getTaskId(task);
 
                 const isRunning =
@@ -331,6 +405,15 @@ function App() {
                     "https://en.wikipedia.org/"
                   )
                     ? task.result.url
+                    : null;
+
+                const safeScreenshotUrl =
+                  typeof task.result?.screenshotUrl ===
+                    "string" &&
+                  task.result.screenshotUrl.startsWith(
+                    "http://localhost:5000/"
+                  )
+                    ? task.result.screenshotUrl
                     : null;
 
                 return (
@@ -379,6 +462,31 @@ function App() {
                       </button>
                     </div>
 
+                    {logs[taskId]?.length > 0 && (
+                      <div className="mt-4 rounded-lg border border-gray-700 bg-black p-4">
+                        <h4 className="mb-2 text-sm font-semibold text-gray-300">
+                          Live logs
+                        </h4>
+
+                        <div className="max-h-48 overflow-y-auto font-mono text-xs">
+                          {logs[taskId].map((log) => (
+                            <p
+                              key={log.id}
+                              className={
+                                log.level === "error"
+                                  ? "text-red-400"
+                                  : log.level === "success"
+                                  ? "text-emerald-400"
+                                  : "text-gray-300"
+                              }
+                            >
+                              {log.message}
+                            </p>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
                     {task.error && (
                       <p className="mt-4 break-words text-sm text-red-400">
                         {task.error}
@@ -396,16 +504,29 @@ function App() {
                             "No summary extracted."}
                         </p>
 
-                        {safeResultUrl && (
-                          <a
-                            href={safeResultUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="mt-4 inline-block text-sm text-blue-400 underline"
-                          >
-                            Open Wikipedia page
-                          </a>
-                        )}
+                        <div className="mt-4 flex flex-wrap gap-4">
+                          {safeResultUrl && (
+                            <a
+                              href={safeResultUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-sm text-blue-400 underline"
+                            >
+                              Open Wikipedia page
+                            </a>
+                          )}
+
+                          {safeScreenshotUrl && (
+                            <a
+                              href={safeScreenshotUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-sm text-blue-400 underline"
+                            >
+                              View screenshot
+                            </a>
+                          )}
+                        </div>
                       </div>
                     )}
                   </li>
