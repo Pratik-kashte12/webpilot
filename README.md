@@ -151,6 +151,19 @@ What is JavaScript?
 
 ## Current Status
 
+## Screenshots
+
+### Dashboard
+
+![WebPilot dashboard](docs/screenshots/dashboard.png)
+
+### Live browser automation logs
+
+![WebPilot live logs](docs/screenshots/live-logs.png)
+
+### Completed task result
+
+![WebPilot completed result](docs/screenshots/completed-result.png)
 - Core browser automation flow is working.
 - Tasks, results, errors, and live logs are saved in MongoDB.
 - Socket.IO updates work across multiple dashboard tabs.
